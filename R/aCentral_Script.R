@@ -16,6 +16,7 @@ source('R/combination_methods.R')
 source('R/accuracy_measures.R')
 source('R/wrapper2meta.R')
 source('R/meta_learner.R')
+source('R/offline_phase.R')
 
 # get data ----
 m4_files <- list.files(recursive = TRUE)
@@ -29,9 +30,9 @@ m4_data <- m4_data %>%
   # sample_n(300) %>%
   mutate(min_obs = ifelse(frequency == 1, h, 2 * frequency)) %>%
   filter(n >( min_obs + 2*h)) %>%
-  sample_n(1500)
+  sample_n(5000)
 
-## ts out-of-sample: ts resample ----
+# create data splits: ts resample ----
 t0 <- Sys.time()
 m4_data <- m4_data %>%
   mutate(
@@ -72,6 +73,7 @@ library(parallel)
 nucleos <- parallel::detectCores() - 1
 
 # START_PROCEDURE
+Sys.time()
 for (w in seq_along(index_lower)) {
   # create temp df with max_series_iteration series
   temp_m4_data <- m4_data %>% dplyr::slice(seq(index_lower[w], index_upper[w]))
@@ -87,12 +89,12 @@ for (w in seq_along(index_lower)) {
     # # # # # # é para paralelização # # # # # # #
     x %>%
       mutate(
-        # calculate weights based on non-overlaping period
+        # calculate weights based on non-overlaping period (training-test)
         weights_oos = purrr::map(resamples4weights, ~weights_oos(.x))
       ) %>% 
       select(-resamples4weights) %>%
       mutate(
-        # calculate 
+        # calculate the test period errors of the combination methods
         meta = purrr::pmap(
           .l = list(rsmpl = resamples, wgts = weights_oos),
           .f = function(rsmpl, wgts) {
@@ -105,17 +107,25 @@ for (w in seq_along(index_lower)) {
   ts_simulation <- append(ts_simulation, temp_simulation)
   #
   print(Sys.time())
+  print(w)
 }
 
 m4_data <- bind_rows(ts_simulation)
-rm(ts_simulation)
+rm(list = c('ts_simulation', 'temp_simulation', 'temp_m4_data'))
 
+saveRDS(m4_data, file = 'db/m4_post_offline.rds', compress = FALSE)
+
+
+
+# generate meta-learner ----
+    ## create training data
 meta_data <- m4_data %>%
   pull(meta) %>% bind_rows() %>%
-  pull(meta_matrix) %>% bind_rows()
+  pull(meta_matrix) %>% bind_rows() %>%
+  replace(is.na(.), 0)
 
-# calculate meta-learner ----
-m4_metalearner <- train_meta(meta_data, n_folds = 2)
+    ## fit classifier
+m4_metalearner <- train_meta(meta_data, n_folds = 5)
 
 # 
 la <- m4_data$ts_historical[[2]] %>%
@@ -124,6 +134,19 @@ la <- m4_data$ts_historical[[2]] %>%
 
 predict(m4_metalearner, new_data = la)
 
+m4_data %>%
+  mutate(
+    combination_label = purrr::map(ts_historical,
+                                   ~ predict(m4_metalearner, 
+                                             new_data = ts_features(.x))
+                                   )
+  )
+
 m4_data$ts_historical[[2]] %>%
   as.ts() %>%
   forecast_methods(.y = ., .h)
+
+
+
+# teste offline ----
+m4_teste <- offline_phase(.data = m4_data, .n_cores = 3)
