@@ -14,14 +14,14 @@ weights_oos <- function(resamples, ...) {
       # run forecast methods
       forecasts = purrr::map(
         splits,
-        ~forecast_methods(.y = rsample::analysis(.x) %>% as.ts(),
+        ~forecast_methods(.y = rsample::analysis(.x) %>% as_ts(),
                           .h = nrow(rsample::assessment(.x)))$mean    # return only mean
       ),
       # calculate weights
       weights = purrr::pmap(
         .l = list(splt = splits, fcts = forecasts),
         .f = function(splt, fcts) {
-          wrapper2weights(.actuals = rsample::assessment(splt) %>% as.ts(),
+          wrapper2weights(.actuals = rsample::assessment(splt) %>% as_ts(),
                           .forecasts = fcts, ...)
         })
     ) %>% pull(weights) 
@@ -47,13 +47,13 @@ wrapper2metalearning <- function(resamples, weights, ...) {
       # calculate ts features 
       ts_features = purrr::map(
         splits,
-        ~ts_features(.y = rsample::analysis(.x) %>% as.ts(),
+        ~ts_features(.y = rsample::analysis(.x) %>% as_ts(),
                      scaled = TRUE)
       ),
       # run forecast methods
       forecasts = purrr::map(
         splits,
-        ~forecast_methods(.y = rsample::analysis(.x) %>% as.ts(),
+        ~forecast_methods(.y = rsample::analysis(.x) %>% as_ts(),
                           .h = nrow(rsample::assessment(.x)))$mean    # return only mean
       ),
       # generate combinations 
@@ -67,9 +67,9 @@ wrapper2metalearning <- function(resamples, weights, ...) {
       combination_errors = purrr::pmap(
         .l = list(splt = splits, cmbn_fcts = combination_forecasts),
         .f = function(splt, cmbn_fcts) {
-          accuracy_measures(.actuals = rsample::assessment(splt) %>% as.ts(), 
+          accuracy_measures(.actuals = rsample::assessment(splt) %>% as_ts(), 
                             .forecasts = cmbn_fcts, 
-                            .historical = rsample::analysis(splt) %>% as.ts())
+                            .historical = rsample::analysis(splt) %>% as_ts())
           
         }),
       # create training matrix
