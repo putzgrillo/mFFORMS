@@ -20,7 +20,7 @@ forecast_methods <- function(
     ) {
   # adjust if is passed as tsibble
   if (tsibble::is_tsibble(.y)) {
-    .y <- .y %>% as.ts()
+    .y <- .y %>% as_ts()
   }
   
   # RUN ALL METHODS
