@@ -29,91 +29,35 @@ set.seed(15081991)
 m4_data <- m4_data %>%
   # sample_n(300) %>%
   mutate(min_obs = ifelse(frequency == 1, h, 2 * frequency)) %>%
-  filter(n >( min_obs + 2*h)) %>%
-  sample_n(5000)
+  filter(n > ( min_obs + 2*h)) %>%
+  filter(frequency == 24) %>%
+  sample_n(20)
 
-# create data splits: ts resample ----
+# calcular dados para meta 
 t0 <- Sys.time()
-m4_data <- m4_data %>%
-  mutate(
-    # create resamples to estimate optimal out-of-sample weights
-    resamples4weights = purrr::pmap(
-      .l = list(tsrs = ts_historical, hrzn = h, min_n = min_obs, n_obs = n),
-      .f = function(tsrs, hrzn, min_n, n_obs) {
-        resample_fixed_initial(df_ts = tsrs %>% filter(row_number() <= n_obs - hrzn),  # select non-overlapping
-                               horizon = hrzn,
-                               min_obs = min_n,
-                               most_recent = T,
-                               max_splits = 1)}
-      ),
-    # create resamples to create meta learning (last h historical as out-of-sample) 
-    resamples = purrr::pmap(
-      .l = list(tsrs = ts_historical, hrzn = h, min_n = min_obs),
-      .f = function(tsrs, hrzn, min_n) {
-        resample_fixed_initial(df_ts = tsrs,  
-                               horizon = hrzn,
-                               min_obs = min_n, 
-                               most_recent = T,   # only the most recent, as FFORMA
-                               max_splits = 1)}   # consider only one, as FFORMA
-    )
-  )
+data <- offline_data_phase(.data = m4_data, .n_cores = 2)
 Sys.time() - t0
 
-## proof of concept: parallelization ----
+saveRDS(m4_data, file = 'db/m4_post_offline.rds', compress = FALSE)
 
-# create temporary files (to reduce memory usage)
-max_series_iteration <- 25
-.n_series <- nrow(m4_data)
-index_lower <- seq(from = 1, to = .n_series, by = max_series_iteration)
-index_upper <- c(index_lower[-1] - 1, .n_series)
 
-ts_simulation <- vector("list")
-# call parallel packages
-library(parallel)
-nucleos <- parallel::detectCores() - 1
-
-# START_PROCEDURE
-Sys.time()
-for (w in seq_along(index_lower)) {
-  # create temp df with max_series_iteration series
-  temp_m4_data <- m4_data %>% dplyr::slice(seq(index_lower[w], index_upper[w]))
-  
-  # break it into n_core lists
-  temp_m4_data$id_core <- paste('c_', sample(seq(nucleos), size = nrow(temp_m4_data), replace = T), sep = '')
-  temp_m4_data <- split(temp_m4_data, f = temp_m4_data$id_core)
-
-  # run procedure
-  temp_simulation <- mclapply(temp_m4_data, function(x) {
-    # # # # # # # # # # # # # # # # # # # # # # # # 
-    # # # # # # código tidy, restante # # # # # # #
-    # # # # # # é para paralelização # # # # # # #
-    x %>%
-      mutate(
-        # calculate weights based on non-overlaping period (training-test)
-        weights_oos = purrr::map(resamples4weights, ~weights_oos(.x))
-      ) %>% 
-      select(-resamples4weights) %>%
-      mutate(
-        # calculate the test period errors of the combination methods
-        meta = purrr::pmap(
-          .l = list(rsmpl = resamples, wgts = weights_oos),
-          .f = function(rsmpl, wgts) {
-            wrapper2metalearning(resamples = rsmpl, weights = wgts)
-          })
-      )
-  }, mc.cores = nucleos)
-  
-  # append 
-  ts_simulation <- append(ts_simulation, temp_simulation)
-  #
-  print(Sys.time())
+# validação erros
+data_testar <- m4_data %>% filter(!(id %in% data$id))
+teste <- vector('list', nrow(data_testar))
+Sys.time() # começo
+for (w in seq_along(teste)) {
+  teste[[w]] <- offline_data_phase(.data = data_testar[w, ])
   print(w)
+  print(Sys.time())
 }
 
-m4_data <- bind_rows(ts_simulation)
-rm(list = c('ts_simulation', 'temp_simulation', 'temp_m4_data'))
 
-saveRDS(m4_data, file = 'db/m4_post_offline.rds', compress = FALSE)
+# calcular meta_learner
+
+
+
+
+
 
 
 
@@ -124,29 +68,48 @@ meta_data <- m4_data %>%
   pull(meta_matrix) %>% bind_rows() %>%
   replace(is.na(.), 0)
 
-    ## fit classifier
-m4_metalearner <- train_meta(meta_data, n_folds = 5)
+    ## balance classes
+meta_balanced <- meta_data %>%
+  group_by(best_method) %>%
+  sample_n(364, replace = T)
 
-# 
-la <- m4_data$ts_historical[[2]] %>%
-  as.ts() %>%
-  ts_features()
+    ## fit classifier ###
+t0 <- Sys.time()
+# m4_metalearner <- train_meta(meta_data, n_folds = 3, n_cores = 3)
+m4_metalearner <- train_meta(meta_balanced, n_folds = 5, n_cores = 3)
+Sys.time() - t0
 
-predict(m4_metalearner, new_data = la)
+saveRDS(m4_metalearner, file = 'db/m4_metalearner.rds', compress = FALSE)
 
-m4_data %>%
-  mutate(
-    combination_label = purrr::map(ts_historical,
-                                   ~ predict(m4_metalearner, 
-                                             new_data = ts_features(.x))
-                                   )
-  )
+# evaluate predictions (classes that are being assigned)
+.data <- m4_data %>% sample_n(100)
+.learner <- m4_metalearner
+.new_meta <- .data %>%
+  pull(meta) %>% bind_rows() %>%
+  pull(meta_matrix) %>% bind_rows() %>%
+  replace(is.na(.), 0)
 
-m4_data$ts_historical[[2]] %>%
-  as.ts() %>%
-  forecast_methods(.y = ., .h)
+.data %>%
+  # mutate(learner_label = predict(.learner, new_data = .new_meta)) %>% 
+  count(learner_label) %>% mutate(freq = n / sum(n))
+
+meta_data %>% count(best_method) %>% mutate(freq = n / sum(n))
+
+# ## not a very honest review (different series), but an approximation
+# .data %>%
+#   mutate(
+#     learner_label = unlist(predict(.learner, new_data = .new_meta)),
+#     actual = meta_data$best_method
+#   ) %>% 
+#   count(learner_label, actual) %>%
+#   pivot_wider(names_from = learner_label, values_from = n) %>%
+#   arrange(actual)
 
 
+# generate predictions  ----
+.data <- .data %>% 
+  mutate(learner_label = predict(.learner, new_data = .new_meta)) 
 
-# teste offline ----
-m4_teste <- offline_phase(.data = m4_data, .n_cores = 3)
+.data %>%
+  mutate(previsoes = purrr::map())
+
