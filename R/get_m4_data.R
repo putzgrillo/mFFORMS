@@ -17,7 +17,7 @@ ts2tibble <- function(ts_object, period = c("Yearly", "Quarterly", "Monthly", "W
     
     # if as_tsibble directly, it will explode memory when reversing to ts (as.ts())
     df_ts <- tsibble(Time = ts_index, 
-                     Date = lubridate::date(ts_index), 
+                     # Date = lubridate::date(ts_index), 
                      value = as.numeric(ts_object), 
                      index = 'Time')
   } else{
