@@ -6,17 +6,16 @@
 #   filter(n >( min_obs + 2*h)) %>%
 #   sample_n(20)
 
-#' mFFORMS offline phase ----
+#' mFFORMS offline phase: data gather ----
 #'
 #' @param .data             tibble: the m4_data tibble (or in the same format)
 #' @param .n_cores          numeric: number of cores to process parallel
 #'
-#' @return a xgboost tidymodel
+#' @return the .data with included meta column
 #'
 #' @export
 #'
-offline_phase <- function(.data, .n_cores = 1) {
-  
+offline_data_phase <- function(.data, .n_cores = 1) {
   # create data splits ----
   .data <- .data %>%
     mutate(
@@ -88,9 +87,30 @@ offline_phase <- function(.data, .n_cores = 1) {
     ts_simulation <- append(ts_simulation, temp_simulation)
   }
   
-  .data <- bind_rows(ts_simulation)
+  # bind rows (removing computed chunks with errors)
+  names(ts_simulation) <- NULL                                  # cannot have duplicated names
+  index2keep <- lapply(ts_simulation, is_tibble) %>% unlist()   # get only positions without errors
+  .data <- dplyr::bind_rows(ts_simulation[index2keep])
 
+  # remove temporary columns
+  .data <- .data %>%
+    dplyr::select(-resamples, -id_core, -weights_oos)
   
+  # return the data updated with meta infos
+return(.data)
+}
+
+
+#' mFFORMS offline phase: train meta-learner model  ----
+#'
+#' @param .data             tibble: the m4_data tibble output from offline_data_phase (or in the same format)
+#' @param .n_cores          numeric: number of cores to process parallel
+#'
+#' @return a tidymodels object
+#'
+#' @export
+#'
+offline_metalearner_phase <- function(.data, .n_folds = 5, .n_cores = 1) {
   # create the matrix for meta-learning ----
   meta_data <- .data %>%
     pull(meta) %>% bind_rows() %>%
@@ -98,8 +118,10 @@ offline_phase <- function(.data, .n_cores = 1) {
     replace(is.na(.), 0)
   
   # fit the meta-learner ----
-  meta_learner <- train_meta(meta_data, n_folds = 3)
+  meta_learner <- train_meta(meta_data, 
+                             n_folds = .n_folds, 
+                             n_cores = .n_cores)
   
-  # return the meta-learner
-return(meta_learner)
+  # return the data updated with meta infos
+  return(meta_learner)
 }
