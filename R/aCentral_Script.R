@@ -17,6 +17,7 @@ source('R/accuracy_measures.R')
 source('R/wrapper2meta.R')
 source('R/meta_learner.R')
 source('R/offline_phase.R')
+source('R/online_phase.R')
 
 # get data ----
 m4_files <- list.files(recursive = TRUE)
@@ -24,44 +25,51 @@ m4_files <- m4_files[grepl(pattern = c('m4_data.rds'),
                            x = m4_files)]
 m4_data <- readRDS(m4_files)
 
-# sample para teste de conceito do código
+# sample ts for proof-of-concept ----
 set.seed(15081991)
 m4_data <- m4_data %>%
-  # sample_n(300) %>%
   mutate(min_obs = ifelse(frequency == 1, h, 2 * frequency)) %>%
   filter(n > ( min_obs + 2*h)) %>%
-  filter(frequency == 24) %>%
-  sample_n(20)
+  # filter(frequency == 24) %>%
+  sample_n(3500)
 
-# calcular dados para meta 
+# offline data phase ----
 t0 <- Sys.time()
-data <- offline_data_phase(.data = m4_data, .n_cores = 2)
+m4_data <- offline_data_phase(.data = m4_data, .n_cores = 3)
 Sys.time() - t0
 
-saveRDS(m4_data, file = 'db/m4_post_offline.rds', compress = FALSE)
+# saveRDS(m4_data, file = 'db/m4_post_offline.rds', compress = FALSE)
+saveRDS(m4_data, file = 'db/m4_post_offline_2.rds', compress = FALSE)
+
+# # validação erros
+# data_testar <- data %>% filter(!(id %in% data$id)) # m4_data depois de validado
+# teste <- vector('list', nrow(data_testar))
+# Sys.time() # começo
+# for (w in seq_along(teste)) {
+#   teste[[w]] <- offline_data_phase(.data = data_testar[w, ])
+#   print(w)
+#   print(Sys.time())
+# }
 
 
-# validação erros
-data_testar <- m4_data %>% filter(!(id %in% data$id))
-teste <- vector('list', nrow(data_testar))
-Sys.time() # começo
-for (w in seq_along(teste)) {
-  teste[[w]] <- offline_data_phase(.data = data_testar[w, ])
-  print(w)
-  print(Sys.time())
-}
+# offline meta_learner phase ----
+t0 <- Sys.time()
+m4_metalearner <- offline_metalearner_phase(.data = m4_data,
+                                            .balance = TRUE,
+                                            .n_cores = 3)
+Sys.time() - t0
+
+saveRDS(m4_metalearner, file = 'db/m4_metalearner.rds', compress = FALSE)
 
 
-# calcular meta_learner
+# online phase ----
+t0 <- Sys.time()
+m4_data <- onlin
 
 
+# remove ----
 
-
-
-
-
-
-# generate meta-learner ----
+# generate meta-learner 
     ## create training data
 meta_data <- m4_data %>%
   pull(meta) %>% bind_rows() %>%
@@ -106,7 +114,7 @@ meta_data %>% count(best_method) %>% mutate(freq = n / sum(n))
 #   arrange(actual)
 
 
-# generate predictions  ----
+# generate predictions
 .data <- .data %>% 
   mutate(learner_label = predict(.learner, new_data = .new_meta)) 
 
