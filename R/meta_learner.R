@@ -1,6 +1,6 @@
 #' Train meta-learner ----
 #'
-#' @param meta_matrix   tibble: the meta_matrix from the output of the wrapper2metalearning function
+#' @param meta_matrix   tibble: the adjusted meta_matrix from the output of the wrapper2metalearning function
 #' @param n_cores       numeric: number of cores to run the hyperparameter tuning
 #' @param n_folds       numeric: number of splits in the cross-validation
 #'
@@ -15,8 +15,8 @@ train_meta <- function(meta_matrix, n_cores = 1, n_folds = 10) {
     rsample::vfold_cv(v = n_folds, repeats = 2)
   
   # RECIPE 
-  xgb_recipe <- recipes::recipe(best_method ~ ., data = meta_matrix) %>%
-    recipes::step_normalize(all_numeric())
+  xgb_recipe <- recipes::recipe(best_method ~ ., data = meta_matrix) #%>%
+    # recipes::step_normalize(all_numeric())
   
   # MODEL SPECIFICATION 
   xgb_model <- 
@@ -35,9 +35,9 @@ train_meta <- function(meta_matrix, n_cores = 1, n_folds = 10) {
   xgb_parameters <- xgb_workflow %>%
     hardhat::extract_parameter_set_dials() %>%
     recipes::update(
-      mtry = mtry(range = c(3L, 42L)),
+      mtry = mtry(range = c(20L, 42L)),
       trees = trees(range = c(1000L, 2000L)),
-      min_n = min_n(range = c(10L, 200L)),
+      min_n = min_n(range = c(3L, 200L)),
       tree_depth = tree_depth(range = c(3L, 25L)),
       learn_rate = learn_rate(range = c(-5,-1)),
       loss_reduction = loss_reduction(range = c(0, 2))
@@ -72,3 +72,4 @@ train_meta <- function(meta_matrix, n_cores = 1, n_folds = 10) {
   result <- fit(xgb_best_model, meta_matrix)
   return(result)
 }
+
