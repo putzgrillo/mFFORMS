@@ -15,7 +15,7 @@ forecast_methods <- function(
     .y, .h, .alpha = 0.05,
     .forecast_methods = c("forecast_arima", "forecast_ets", "forecast_naive",
                           "forecast_rwd", "forecast_snaive", "forecast_stlm", 
-                          "forecast_tbats", "forecast_thetaf"#, 'forecast_nnetar'
+                          "forecast_tbats", "forecast_thetaf", 'forecast_nnetar'
                           )
     ) {
   # adjust if is passed as tsibble
@@ -52,7 +52,7 @@ forecast_methods <- function(
 #' @export
 forecast_arima <- function(y, h, cl) {
   forecast::forecast(object = forecast::auto.arima(y = y, 
-                                                   stepwise = TRUE, 
+                                                   stepwise = FALSE, 
                                                    approximation = FALSE),
                      h = h,
                      level = cl)
