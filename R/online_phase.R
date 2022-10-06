@@ -3,12 +3,13 @@
 #' @param .data             tibble: the m4_data tibble (or in the same format)
 #' @param .learner          xgboost: the tidymodels xgboost output from the offline_phase
 #' @param .n_cores          numeric: number of cores to process parallel
+#' @param .series_per_chunk numeric: number of time series to run per core * iteration
 #'
 #' @return .data with inclusion of the predicted label and expected forecast
 #'
 #' @export
 #'
-online_phase <- function(.data, .learner, .n_cores) {
+online_phase <- function(.data, .learner, .n_cores, .series_per_chunk = 10) {
   # calculate the features to pass to meta_learner
   .data <- .data %>%
     dplyr::mutate(
@@ -56,17 +57,69 @@ online_phase <- function(.data, .learner, .n_cores) {
         }
       )
     )
+  
+  
+  ## parallelization: parallelization parameters ----
+  ### create temporary files (to reduce memory usage)
+  max_series_iteration <- .n_cores * .series_per_chunk # number of series to calculate
+  .n_series <- nrow(.data)
+  index_lower <- seq(from = 1, to = .n_series, by = max_series_iteration)
+  index_upper <- c(index_lower[-1] - 1, .n_series)
+  
+  ## parallelization: start procedure ----
+  ts_simulation <- vector("list")
+  library(parallel)
+  # START_PROCEDURE
+  for (w in seq_along(index_lower)) {
+    # create temp df with max_series_iteration series
+    temp_data <- .data %>% dplyr::slice(seq(index_lower[w], index_upper[w]))
+    
+    # break it into n_core lists
+    temp_data$id_core <- paste('c_', sample(seq(.n_cores), size = nrow(temp_data), replace = T), sep = '')
+    temp_data <- split(temp_data, f = temp_data$id_core)
+    
+    # run procedure
+    temp_simulation <- mclapply(temp_data, function(x) {
+      # # # # # # # # # # # # # # # # # # # # # # # # 
+      # # # # # # código tidy, restante # # # # # # #
+      # # # # # # é para paralelização # # # # # # #
+      # # # # # # # # # # # # # # # # # # # # # # # # 
+      x %>%
+        mutate(
+          # generate combined predictions 
+          predictions = purrr::pmap(
+            .l = list(resample = resamples, label = learner_label),
+            .f = function(resample, label) {
+              smart_combination(.resample = resample$splits[[1]],  # ugly hack to avoid adjusting prediction to multiple resamples
+                                .label = as.character(label))      # output as character, otherwise do.call doesnt work properly
+            }
+          )
+        )
+    }, mc.cores = .n_cores)
+    
+    # append 
+    ts_simulation <- append(ts_simulation, temp_simulation)
+  }
+  
+  # bind rows (removing computed chunks with errors)
+  names(ts_simulation) <- NULL                                  # cannot have duplicated names
+  index2keep <- lapply(ts_simulation, is_tibble) %>% unlist()   # get only positions without errors
+  .data <- dplyr::bind_rows(ts_simulation[index2keep])
+  
+  # return data without intermediate columns
+  .data %>%
+    select(-resamples)
 }
 
 
-for (w in seq(nrow(.data))) {
-  smart_combination(
-    .resample <- .data$resamples[[w]]$splits[[1]],
-    .label <- as.character(.data$learner_label[[w]] )
-  )
-  print(w)
-  print(Sys.time())
-}
+# for (w in seq(nrow(.data))) {
+#   smart_combination(
+#     .resample <- .data$resamples[[w]]$splits[[1]],
+#     .label <- as.character(.data$learner_label[[w]] )
+#   )
+#   print(w)
+#   print(Sys.time())
+# }
 
 #' forecasting optimised for the the selected combination method ----
 #'
