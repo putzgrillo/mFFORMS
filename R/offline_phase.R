@@ -10,12 +10,13 @@
 #'
 #' @param .data             tibble: the m4_data tibble (or in the same format)
 #' @param .n_cores          numeric: number of cores to process parallel
+#' @param .series_per_chunk numeric: number of time series to run per core * iteration
 #'
 #' @return the .data with included meta column
 #'
 #' @export
 #'
-offline_data_phase <- function(.data, .n_cores = 1) {
+offline_data_phase <- function(.data, .n_cores = 1, .series_per_chunk = 10) {
   # create data splits ----
   .data <- .data %>%
     mutate(
@@ -45,7 +46,7 @@ offline_data_phase <- function(.data, .n_cores = 1) {
   
   ## parallelization: parallelization parameters ----
   ### create temporary files (to reduce memory usage)
-  max_series_iteration <- .n_cores * 10 # number of series to calculate (10 per core, but could be adjusted)
+  max_series_iteration <- .n_cores * .series_per_chunk # number of series to calculate
   .n_series <- nrow(.data)
   index_lower <- seq(from = 1, to = .n_series, by = max_series_iteration)
   index_upper <- c(index_lower[-1] - 1, .n_series)
@@ -104,18 +105,35 @@ return(.data)
 #' mFFORMS offline phase: train meta-learner model  ----
 #'
 #' @param .data             tibble: the m4_data tibble output from offline_data_phase (or in the same format)
+#' @param .baance           logical: should the classes be balanced before classification
+#' @param .nfolds           numeric: number of folds to run cross-validation on
 #' @param .n_cores          numeric: number of cores to process parallel
 #'
 #' @return a tidymodels object
 #'
 #' @export
 #'
-offline_metalearner_phase <- function(.data, .n_folds = 5, .n_cores = 1) {
+offline_metalearner_phase <- function(.data, .balance = FALSE, .n_folds = 5, .n_cores = 1) {
   # create the matrix for meta-learning ----
   meta_data <- .data %>%
     pull(meta) %>% bind_rows() %>%
     pull(meta_matrix) %>% bind_rows() %>%
     replace(is.na(.), 0)
+  
+  # balance classes
+  if (.balance) {
+    # max observations in the least frequent class
+    max_obs <- meta_data %>%
+      count(best_method) %>%
+      arrange(n) %>%
+      slice(1) %>% pull(n)
+    
+    # sample max_obs for each prediction class
+    meta_data <- meta_data %>%
+      group_by(best_method) %>%
+      sample_n(max_obs, replace = T) %>% 
+      ungroup()
+  }
   
   # fit the meta-learner ----
   meta_learner <- train_meta(meta_data, 
