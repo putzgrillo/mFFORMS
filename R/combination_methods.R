@@ -77,13 +77,27 @@ weights_peLASSO <- function(.actual, .forecast, .constraint = FALSE) {
   .forecast <- .forecast %>% as.matrix()
   
   # first step, lasso
-  cv_lasso <- glmnet::cv.glmnet(y = .actual,
-                                x = .forecast,
-                                alpha = 1,
-                                nfolds = 5,
-                                intercept = FALSE)
-
-  weights_lasso <- coef(cv_lasso, s = "lambda.1se")[-1,]
+  weights_lasso <- tryCatch(
+    {
+      # cross validation on lasso (if cannot be estimated, return 1N)
+      cv_lasso <- glmnet::cv.glmnet(y = .actual,
+                                    x = .forecast,
+                                    lower.limits = rep(0, ncol(.forecast)), 
+                                    alpha = 1,
+                                    nfolds = 5,
+                                    intercept = FALSE)
+      # return the weights 
+      coef(cv_lasso, s = "lambda.1se")[-1,]
+    }, 
+    # if there is problem in estimating lambda (need non NA values to interpolate), return 1N
+    error = function(e) weights_1N(.actual = .actual,
+                                   .forecast = .forecast)
+  )
+  
+  # stop if there was an error, return 1/N instead (no need to constrain)
+  if ( length(unique(weights_lasso)) == 1) {
+    return(weights_lasso)
+  }
 
   # second step, eRidge (only if more than one variable left)
   n_nonzero <- sum(weights_lasso > 0)
@@ -93,7 +107,7 @@ weights_peLASSO <- function(.actual, .forecast, .constraint = FALSE) {
     # standard ridge
     cv_pelasso <- glmnet::cv.glmnet(y = adjusted_actual,
                                     x = .forecast[, weights_lasso != 0],
-                                    family = "gaussian",
+                                    lower.limits = rep(0, ncol(.forecast[, weights_lasso != 0])),
                                     alpha = 0,
                                     nfolds = 5,
                                     intercept = FALSE)
@@ -103,12 +117,20 @@ weights_peLASSO <- function(.actual, .forecast, .constraint = FALSE) {
     weights_pelasso <- weights_lasso[weights_lasso != 0]
   }
 
-  # if constraint, set sum of weigths to one
+  # if constraint is true, set sum of weigths to one
   if (.constraint) { weights_pelasso <- weights_pelasso / sum(weights_pelasso)  }
 
-  # return results
+  # adjust results
   weights <- weights_lasso                               # all first step weights
   weights[weights_lasso != 0] <- weights_pelasso         # substitute weights
+  
+  ## if all weights are zero, then equal weights
+  if (sum(weights) == 0) {
+    weights <- rep(x = 1 / length(weights), times = length(weights))
+    names(weights) <- colnames(.forecast)
+  }
+  
+  # return results
   return(weights)
 }
 
@@ -159,19 +181,36 @@ weights_LASSO <- function(.actual, .forecast, .constraint = FALSE) {
   .forecast <- .forecast %>% as.matrix()
   
   # first step, lasso
-  cv_lasso <- glmnet::cv.glmnet(y = .actual,
-                                x = .forecast,
-                                alpha = 1,
-                                nfolds = 5,
-                                intercept = FALSE)
-
-  weights_lasso <- coef(cv_lasso, s = "lambda.1se")[-1,]
-
+  weights_lasso <- tryCatch(
+    {
+      # cross validation on lasso (if cannot be estimated, return 1N)
+      cv_lasso <- glmnet::cv.glmnet(y = .actual,
+                                    x = .forecast,
+                                    lower.limits = rep(0, ncol(.forecast)), 
+                                    alpha = 1,
+                                    nfolds = 5,
+                                    intercept = FALSE)
+      # return the weights 
+      coef(cv_lasso, s = "lambda.1se")[-1,]
+    }, 
+    # if there is problem in estimating lambda (need non NA values to interpolate), return 1N
+    error = function(e) weights_1N(.actual = .actual,
+                                    .forecast = .forecast)
+    )
+  
   # if constraint, set sum of weigths to one
   if (.constraint) { weights_lasso <- weights_lasso / sum(weights_lasso)  }
 
-  # return results
+  # adjust results
   weights <- weights_lasso
+  
+  ## if all weights are zero, then equal weights
+  if (sum(weights) == 0) {
+    weights <- rep(x = 1 / length(weights), times = length(weights))
+    names(weights) <- colnames(.forecast)
+  }
+
+  # return results
   return(weights)
 }
 
