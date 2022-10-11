@@ -11,12 +11,14 @@
 #' @param .data             tibble: the m4_data tibble (or in the same format)
 #' @param .n_cores          numeric: number of cores to process parallel
 #' @param .series_per_chunk numeric: number of time series to run per core * iteration
+#' @param .temp_file        character: full path to save Rds file
+#' @param .save_each        numeric: after how many iterations should it be saved?
 #'
 #' @return the .data with included meta column
 #'
 #' @export
 #'
-offline_data_phase <- function(.data, .n_cores = 1, .series_per_chunk = 10) {
+offline_data_phase <- function(.data, .n_cores = 1, .series_per_chunk = 10, .temp_file = NULL, .save_each = 100) {
   # create data splits ----
   .data <- .data %>%
     mutate(
@@ -82,10 +84,28 @@ offline_data_phase <- function(.data, .n_cores = 1, .series_per_chunk = 10) {
               wrapper2metalearning(resamples = rsmpl, weights = wgts)
             })
         )
-    }, mc.cores = .n_cores)
+    }, mc.cores = eval(.n_cores))
     
     # append 
     ts_simulation <- append(ts_simulation, temp_simulation)
+    
+    # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # control parameters # # # # # # # 
+    # # # # # # # # # # # # # # # # # # # # # # # 
+    # print progress
+    print(
+      paste0(w, '/', length(index_lower), ' at ', Sys.time())
+    )
+    
+    # save_temp file
+    if (!is.null(.temp_file) & w %% .save_each == 0) {
+      saveRDS(ts_simulation, file = .temp_file, compress = FALSE)
+    }
+    
+    # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # # # end control parameters
+    # # # # # # # # # # # # # # # # # # # # # # # 
+    
   }
   
   # bind rows (removing computed chunks with errors)
